@@ -1,0 +1,18 @@
+world:
+- id: table1
+  type: table
+  pose: { x: 2, y: 0, z: 0 }
+  scale: { x: 1, y: 2, z: 2}
+- id: table2
+  type: table
+  pose: { x: 3, y: 2, z: 0, Z: 1.54 }
+  scale: { x: 1, y: 2, z: 2}
+
+# 壁に関する指定
+# - id: walls
+#   shape:
+#     heightmap:
+#       image: $(file my-walls.pgm)
+#       height: 2
+#       resolution: 0.025
+#       pose: { x: -10.0, y: -10.0, z: 0 }
