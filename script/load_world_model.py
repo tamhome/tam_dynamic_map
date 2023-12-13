@@ -127,6 +127,7 @@ class LoadWorldModel(Node):
         if self.initialize:
             self.loginfo("remove all collison world's objetcs")
             self.collision_world.remove_all()
+            rospy.sleep(5)
 
         world_model = self.load_world_model(self.yaml_path)
         print(world_model)
