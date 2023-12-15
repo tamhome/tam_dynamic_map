@@ -41,19 +41,19 @@ from cubercnn.modeling.meta_arch import RCNN3D, build_model
 from cubercnn.modeling.backbone import build_dla_from_vision_fpn_backbone
 from cubercnn import util, vis
 
-from sensor_msgs.msg import Image, CameraInfo
+from sensor_msgs.msg import Image, CameraInfo, CompressedImage
 from geometry_msgs.msg import PoseStamped
 from geometry_msgs.msg import Point, Pose, Quaternion
 from std_msgs.msg import UInt16, Float32MultiArray
 from visualization_msgs.msg import Marker, MarkerArray
 from tam_dynamic_map.msg import Omni3D, Omni3DArray
 
-from cv_bridge import CvBridge
+# from cv_bridge import CvBridge
 from tamlib.node_template import Node
 from tamlib.utils import Logger
 from tamlib.tf import Transform, euler2quaternion
 from hsrlib.utils import utils, description, joints, locations
-# from tamlib.cv_bridge import CvBridge
+from tamlib.cv_bridge import CvBridge
 
 
 class RecogFurnitureNode(Logger):
@@ -65,9 +65,9 @@ class RecogFurnitureNode(Logger):
         # ROSPARAMの読み込み
         ###################################################
         self.p_omni3d_marker_array = rospy.get_param("~omni3d_marker_array", "/omni3d/objects")
-        self.p_omni3d_result_image = rospy.get_param("~omni3d_image", "/omni3d/result_image")
-        self.p_omni3d_array = rospy.get_param("~omni3d_pose_array", "/tam_dynamic_map/omni3d_array")
-        self.p_rgb_topic = rospy.get_param("~rgb", "/hsrb/head_rgbd_sensor/rgb/image_raw")
+        self.p_omni3d_result_image = rospy.get_param("~omni3d_image", "/omni3d/result_image/image_raw")
+        self.p_omni3d_pose_array = rospy.get_param("~omni3d_pose_array", "/tam_dynamic_map/omni3d_array")
+        self.p_rgb_topic = rospy.get_param("~rgb_topic", "/relay/hsrb/head_rgbd_sensor/rgb/image_rect_color/compressed")
         self.p_camera_info_topic = rospy.get_param("~camera_info_topic", "/hsrb/head_rgbd_sensor/rgb/camera_info")
 
         ###################################################
@@ -108,10 +108,10 @@ class RecogFurnitureNode(Logger):
         ###################################################
         # ROS interface
         ###################################################
-        self.sub = rospy.Subscriber(self.p_rgb_topic, Image, self.callback)
-        self.pred_pub_debug = rospy.Publisher(self.p_omni3d_result_image, Image, queue_size=1)
+        self.rgb_sub = rospy.Subscriber(self.p_rgb_topic, CompressedImage, self.callback)
+        self.pred_pub_debug = rospy.Publisher(self.p_omni3d_result_image, Image, queue_size=10)
         self.marker_pub = rospy.Publisher(self.p_omni3d_marker_array, MarkerArray,  queue_size=10)
-        self.full_pred_pub = rospy.Publisher(self.p_omni3d_array, Omni3DArray, queue_size=1)
+        self.full_pred_pub = rospy.Publisher(self.p_omni3d_pose_array, Omni3DArray, queue_size=1)
 
         ###################################################
         # 制御用変数の初期化
@@ -253,28 +253,20 @@ class RecogFurnitureNode(Logger):
 
         return markers
 
-    def callback(self, msg: Image) -> None:
+    def callback(self, msg: CompressedImage) -> None:
         """画像が入力されたときのコールバック関数
         Args:
             msg (Image): Image_msg
         Return:
             None
         """
-        # camera座標を取得
-        # camera_pose = self.get_camera_pose()
-        # camera_matrix = self.pose_to_matrix(camera_pose)
-        # self.cam_poses = copy.deepcopy(camera_matrix)
-
         debug_img = self.infer(msg)
-        image_msg = self.bridge.cv2_to_imgmsg(debug_img, encoding='bgr8')
+        # image_msg = self.bridge.cv2_to_compressed_imgmsg(debug_img)
+        image_msg = self.bridge.cv2_to_imgmsg(debug_img, encoding="rgb8")
         image_msg.header.stamp = msg.header.stamp
         self.pred_pub_debug.publish(image_msg)
 
-        # msg = Float32MultiArray()
-        # msg.data = self.detections
-        # self.pred_pub.publish(msg)
-
-    def infer(self, img_msg: Image) -> np.ndarray:
+    def infer(self, img_msg: CompressedImage) -> np.ndarray:
         """Omni3Dを利用した家具認識の実行
         Args:
             img_msg(Image): 対象とするimage_message
@@ -284,13 +276,14 @@ class RecogFurnitureNode(Logger):
 
         batched = []
         self.detections.clear()
-        h = img_msg.height
-        w = img_msg.width
+        # h = img_msg.height
+        # w = img_msg.width
+        h = 480
+        w = 640
         debug_img = np.zeros((h, w, 3)).astype(np.uint8)
         imgs = []
         markerArray = MarkerArray()
-
-        im = self.bridge.imgmsg_to_cv2(img_msg, desired_encoding='passthrough')
+        im = self.bridge.compressed_imgmsg_to_cv2(img_msg)
         image_shape = im.shape[:2]
         im = cv2.cvtColor(im, cv2.COLOR_BGR2RGB)
         imgs.append(im)
@@ -411,7 +404,7 @@ class ArgsSetting():
     def __init__(self) -> None:
         self.config_file = "cubercnn://omni3d/cubercnn_DLA34_FPN.yaml"
         self.input_folder = "../include/omni3d/datasets/hma"
-        self.threshold = 0.60
+        self.threshold = 0.80
         self.display = False
         self.eval_only = True
         self.num_gpus = 1

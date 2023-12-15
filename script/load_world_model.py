@@ -19,7 +19,7 @@ class LoadWorldModel(Node):
     def __init__(self) -> None:
         super().__init__()
         self.furniture_dir = roslib.packages.get_pkg_dir("tam_dynamic_map") + "/io/furniture_templates/"
-        self.yaml_path = roslib.packages.get_pkg_dir("tam_dynamic_map") + "/io/map/sample.yaml"
+        self.yaml_path = roslib.packages.get_pkg_dir("tam_dynamic_map") + "/io/map/hma_room05.yaml"
 
         self.marker_array_publisher = rospy.Publisher('/dynamic_map/semi_dynamic_markers', MarkerArray, queue_size=10)
         self.collision_world = collision_world.CollisionWorld()
@@ -27,7 +27,7 @@ class LoadWorldModel(Node):
         # collision_worldの初期化フラグ
         self.initialize = True
 
-    def load_marker_poses(self, model_type: str, marker_ns: str, offset_pose={"x": 0, "y": 0, "z": 0}, scale={"x": 1, "y": 1, "z": 1}) -> dict:
+    def load_marker_poses(self, model_type: str, marker_ns: str, offset_pose={"x": 0, "y": 0, "z": 0}, scale={"x": 1, "y": 1, "z": 1}, quaternion={"x": 0, "y": 0, "z": 0, "w": 1}) -> dict:
         """家具のモデルとなるyamlを読み込む関数
         Args:
             model_type(str): どの家具を読み込むのか
@@ -66,13 +66,13 @@ class LoadWorldModel(Node):
                         size["x"] * scale["x"],
                         size["y"] * scale["y"],
                         size["z"] * scale["z"],
-                        pose=[(pub_pose_x, pub_pose_y, pub_pose_z), (0, 0, 0, 1)],
+                        pose=[(pub_pose_x, pub_pose_y, pub_pose_z), (quaternion["x"], quaternion["y"], quaternion["z"], quaternion["w"])],
                         name=marker_ns
                     )
             else:
                 marker.type = Marker.CUBE
             marker.action = Marker.ADD
-            marker.pose = Pose(Point(pub_pose_x, pub_pose_y, pub_pose_z), Quaternion(0, 0, 0, 1))
+            marker.pose = Pose(Point(pub_pose_x, pub_pose_y, pub_pose_z), Quaternion(quaternion["x"], quaternion["y"], quaternion["z"], quaternion["w"]))
             marker.scale.x = size["x"] * scale["x"]
             marker.scale.y = size["y"] * scale["y"]
             marker.scale.z = size["z"] * scale["z"]
@@ -129,13 +129,20 @@ class LoadWorldModel(Node):
             self.collision_world.remove_all()
             rospy.sleep(5)
 
-        world_model = self.load_world_model(self.yaml_path)
-        print(world_model)
+        try:
+            world_model = self.load_world_model(self.yaml_path)
+        except FileNotFoundError as e:
+            self.logtrace(e)
+            self.logwarn(f"指定されたyamlファイルが存在しません．{self.yaml_path}")
+            return
+        except Exception as e:
+            self.logwarn(e)
+            self.logwarn("yamlファイルが指定のフォーマットになっていません．")
+            return
 
         for target_model in world_model:
-            print(target_model["id"])
-            print(target_model["pose"])
             if target_model != "wall":
+                # marker_array = self.load_marker_poses(target_model["type"], target_model["id"], target_model["pose"], target_model["scale"], target_model["quaternion"])
                 marker_array = self.load_marker_poses(target_model["type"], target_model["id"], target_model["pose"], target_model["scale"])
             else:
                 # 壁は画像から読み込みを行う
