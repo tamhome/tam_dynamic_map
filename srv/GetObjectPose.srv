@@ -1,0 +1,5 @@
+string obj_id
+---
+# scale is [x, y, z]
+geometry_msgs/Pose obj_pose
+float32[] scale
