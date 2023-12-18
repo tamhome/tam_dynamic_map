@@ -69,7 +69,9 @@ class RecogFurnitureNode(Logger):
         self.p_omni3d_pose_array = rospy.get_param("~omni3d_pose_array", "/tam_dynamic_map/omni3d_array")
         self.p_rgb_topic = rospy.get_param("~rgb_topic", "/relay/hsrb/head_rgbd_sensor/rgb/image_rect_color/compressed")
         self.p_camera_info_topic = rospy.get_param("~camera_info_topic", "/hsrb/head_rgbd_sensor/rgb/camera_info")
-        self.p_omni3d_threshold = rospy.get_param("~omni3d_th", 0.60)
+        self.p_omni3d_threshold = rospy.get_param("~omni3d_th", 0.70)
+        self.p_time_ignore_threshold = rospy.get_param("~omni3d_time_ignore_th", 0.15)
+        self.ignore_threshold = rospy.Duration(self.p_time_ignore_threshold)
 
         ###################################################
         # Omni3dモデルの初期化
@@ -262,9 +264,13 @@ class RecogFurnitureNode(Logger):
         """
         debug_img = self.infer(msg)
         # image_msg = self.bridge.cv2_to_compressed_imgmsg(debug_img)
-        image_msg = self.bridge.cv2_to_imgmsg(debug_img, encoding="rgb8")
-        image_msg.header.stamp = msg.header.stamp
-        self.pred_pub_debug.publish(image_msg)
+        try:
+            image_msg = self.bridge.cv2_to_imgmsg(debug_img, encoding="rgb8")
+            image_msg.header.stamp = msg.header.stamp
+            self.pred_pub_debug.publish(image_msg)
+        except TypeError as e:
+            self.logtrace(e)
+            self.logdebug("cannot publish image")
 
     def infer(self, img_msg: CompressedImage) -> np.ndarray:
         """Omni3Dを利用した家具認識の実行
@@ -273,6 +279,10 @@ class RecogFurnitureNode(Logger):
         Return:
             np.ndarray: 認識結果を描画した画像
         """
+        img_timestamp = img_msg.header.stamp
+        time_diff = rospy.Time.now() - img_timestamp
+        if time_diff > self.ignore_threshold:
+            return
 
         batched = []
         self.detections.clear()
