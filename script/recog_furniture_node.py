@@ -69,6 +69,7 @@ class RecogFurnitureNode(Logger):
         self.p_omni3d_pose_array = rospy.get_param("~omni3d_pose_array", "/tam_dynamic_map/omni3d_array")
         self.p_rgb_topic = rospy.get_param("~rgb_topic", "/relay/hsrb/head_rgbd_sensor/rgb/image_rect_color/compressed")
         self.p_camera_info_topic = rospy.get_param("~camera_info_topic", "/hsrb/head_rgbd_sensor/rgb/camera_info")
+        self.p_omni3d_threshold = rospy.get_param("~omni3d_th", 0.60)
 
         ###################################################
         # Omni3dモデルの初期化
@@ -81,7 +82,6 @@ class RecogFurnitureNode(Logger):
         DetectionCheckpointer(self.model, save_dir=self.cfg.OUTPUT_DIR).resume_or_load(self.cfg.MODEL.WEIGHTS, resume=True)
 
         self.model.eval()
-        self.thres = args.threshold
 
         min_size = self.cfg.INPUT.MIN_SIZE_TEST
         max_size = self.cfg.INPUT.MAX_SIZE_TEST
@@ -150,41 +150,41 @@ class RecogFurnitureNode(Logger):
     def delete(self):
         pass
 
-    def get_camera_pose(self, target_frame: str = "/map", camera_frame: str = "/head_rgbd_sensor_rgb_frame") -> Optional[PoseStamped]:
-        """
-        カメラの姿勢を指定されたターゲットフレーム内で取得します。
+    # def get_camera_pose(self, target_frame: str = "/map", camera_frame: str = "/head_rgbd_sensor_rgb_frame") -> Optional[PoseStamped]:
+    #     """
+    #     カメラの姿勢を指定されたターゲットフレーム内で取得します。
 
-        Args:
-            target_frame (str): 変換の対象となるフレーム。デフォルトは "/map" です。
-            camera_frame (str): 変換のためのカメラフレーム。デフォルトは "/head_rgbd_sensor_rgb_frame" です。
+    #     Args:
+    #         target_frame (str): 変換の対象となるフレーム。デフォルトは "/map" です。
+    #         camera_frame (str): 変換のためのカメラフレーム。デフォルトは "/head_rgbd_sensor_rgb_frame" です。
 
-        Return:
-            Optional[PoseStamped]: ターゲットフレーム内でのカメラの変換された姿勢を含む PoseStamped メッセージ。
-            TF変換例外（LookupException、ConnectivityException、ExtrapolationException）の場合は None を返します。
-        """
-        try:
-            # waitForTransformメソッドで座標変換の準備ができるまで待つ
-            self.listener.waitForTransform(target_frame, camera_frame, rospy.Time(), rospy.Duration(4.0))
+    #     Return:
+    #         Optional[PoseStamped]: ターゲットフレーム内でのカメラの変換された姿勢を含む PoseStamped メッセージ。
+    #         TF変換例外（LookupException、ConnectivityException、ExtrapolationException）の場合は None を返します。
+    #     """
+    #     try:
+    #         # waitForTransformメソッドで座標変換の準備ができるまで待つ
+    #         self.listener.waitForTransform(target_frame, camera_frame, rospy.Time(), rospy.Duration(4.0))
 
-            # lookupTransformメソッドで座標変換を行う
-            (trans, rot) = self.listener.lookupTransform(target_frame, camera_frame, rospy.Time(0))
+    #         # lookupTransformメソッドで座標変換を行う
+    #         (trans, rot) = self.listener.lookupTransform(target_frame, camera_frame, rospy.Time(0))
 
-            # 変換された座標と姿勢をPoseStampedメッセージに格納
-            camera_pose = PoseStamped()
-            camera_pose.header.frame_id = target_frame
-            camera_pose.header.stamp = rospy.Time(0)
-            camera_pose.pose.position.x = trans[0]
-            camera_pose.pose.position.y = trans[1]
-            camera_pose.pose.position.z = trans[2]
-            camera_pose.pose.orientation.x = rot[0]
-            camera_pose.pose.orientation.y = rot[1]
-            camera_pose.pose.orientation.z = rot[2]
-            camera_pose.pose.orientation.w = rot[3]
+    #         # 変換された座標と姿勢をPoseStampedメッセージに格納
+    #         camera_pose = PoseStamped()
+    #         camera_pose.header.frame_id = target_frame
+    #         camera_pose.header.stamp = rospy.Time(0)
+    #         camera_pose.pose.position.x = trans[0]
+    #         camera_pose.pose.position.y = trans[1]
+    #         camera_pose.pose.position.z = trans[2]
+    #         camera_pose.pose.orientation.x = rot[0]
+    #         camera_pose.pose.orientation.y = rot[1]
+    #         camera_pose.pose.orientation.z = rot[2]
+    #         camera_pose.pose.orientation.w = rot[3]
 
-            return camera_pose
-        except (tf.LookupException, tf.ConnectivityException, tf.ExtrapolationException):
-            rospy.logwarn("TF transform exception")
-            return None
+    #         return camera_pose
+    #     except (tf.LookupException, tf.ConnectivityException, tf.ExtrapolationException):
+    #         rospy.logwarn("TF transform exception")
+    #         return None
 
     def pose_to_matrix(self, pose) -> np.ndarray:
         """
@@ -317,7 +317,7 @@ class RecogFurnitureNode(Logger):
             )):
 
                 # skip
-                if score < self.thres:
+                if score < self.p_omni3d_threshold:
                     continue
 
                 cat = self.cats[cat_idx]
@@ -404,7 +404,7 @@ class ArgsSetting():
     def __init__(self) -> None:
         self.config_file = "cubercnn://omni3d/cubercnn_DLA34_FPN.yaml"
         self.input_folder = "../include/omni3d/datasets/hma"
-        self.threshold = 0.80
+        self.threshold = 0.70
         self.display = False
         self.eval_only = True
         self.num_gpus = 1

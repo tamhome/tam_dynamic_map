@@ -78,7 +78,7 @@ class CreateWorldModel(Node):
         self.tracking_objects = {}  # tracking用に用いる制御変数
         self.registered_objects = {}  # trackingの結果実際にmapに登録されるobjをまとめる変数
         self.index = 0
-        self.index_dict = {"table": 0, "chair": 0}
+        self.index_dict = {"table": 0, "chair": 0, "unknown": 0}
         self.world_model_path = roslib.packages.get_pkg_dir("tam_dynamic_map") + "/io/map/" + self.p_yaml_path
 
         ###################################################
@@ -128,7 +128,7 @@ class CreateWorldModel(Node):
         self.registered_objects[registerd_key] = obj
         pose_xyz = {"x": obj["center_pose"].position.x, "y": obj["center_pose"].position.y, "z": obj["center_pose"].position.z}
         quaternion = {"x": obj["center_pose"].orientation.x, "y": obj["center_pose"].orientation.y, "z": obj["center_pose"].orientation.z, "w": obj["center_pose"].orientation.w}
-        scale = {"x": obj["scale"][0], "y": obj["scale"][2], "z": obj["scale"][1]}
+        scale = {"x": obj["scale"][2], "y": obj["scale"][1], "z": obj["scale"][0]}
         registerd_info = {"id": registerd_key, "type": category_name, "pose": pose_xyz, "scale": scale, "quaternion": quaternion}
 
         # 既存のYAMLファイルからデータを読み込む
@@ -147,7 +147,6 @@ class CreateWorldModel(Node):
         # YAMLファイルに書き出す
         with open(yaml_file_path, 'w') as yaml_file:
             yaml.dump(world_model_data, yaml_file, default_flow_style=False)
-
 
         return registerd_key
 
@@ -177,7 +176,8 @@ class CreateWorldModel(Node):
             # 距離がしきい値以上　新規オブジェクトとして登録
             if min_distance > self.p_distance_th:
                 self.logdebug("register new objects for tracking")
-                tracking_obj = {"center_pose": center_pose, "scale": scale, "category": category_name, "tracking_count": 0}
+                # tracking_obj = {"center_pose": center_pose, "scale": scale, "category": category_name, "tracking_count": 0}
+                tracking_obj = {"center_pose": center_pose, "scale": scale, "category": "unknown", "tracking_count": 0}
                 self.tracking_objects[self.index] = tracking_obj
                 self.index += 1
             else:
