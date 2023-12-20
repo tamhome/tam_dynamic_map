@@ -20,4 +20,6 @@
         <param name="world_model_path" type="str" value="$(arg world_model_name).yaml"/>
     </node>
 
+    <node pkg="rviz" type="rviz" name="rviz_create_world_model" args="-d $(find tam_dynamic_map)/io/create_world_model.rviz"/>
+
 </launch>
