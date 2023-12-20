@@ -31,8 +31,8 @@ class LoadWorldModel(Node):
         self.marker_nav_goal_publisher = rospy.Publisher('/tam_dynamic_map/navigation_goal', Marker, queue_size=10)
 
         # service
-        rospy.Service("tam_dynamic_map/get_obj_pose/service", GetObjectPose, self.cb_get_object_pose)
-        rospy.Service("tam_dynamic_map/get_navigation_goal/service", GetNavigationGoal, self.cb_get_navigation_goal)
+        rospy.Service("/tam_dynamic_map/get_obj_pose/service", GetObjectPose, self.cb_get_object_pose)
+        rospy.Service("/tam_dynamic_map/get_navigation_goal/service", GetNavigationGoal, self.cb_get_navigation_goal)
 
         self.collision_world = collision_world.CollisionWorld()
 
@@ -61,7 +61,8 @@ class LoadWorldModel(Node):
             pose = content["pose"]
             size = content["size"]
 
-            if model_type == "unknown":
+            # if model_type == "unknown":
+            if True:
                 pub_pose_x = offset_pose["x"]
                 pub_pose_y = offset_pose["y"]
                 pub_pose_z = offset_pose["z"]

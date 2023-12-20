@@ -77,10 +77,11 @@ class CreateWorldModel(Node):
 
         # self.category_dict = {34: "table", 15: "chair"}
         self.category_dict = {34: "table"}
+        self.category_dict = {34: "table", 46: "bin"}
         self.tracking_objects = {}  # tracking用に用いる制御変数
         self.registered_objects = {}  # trackingの結果実際にmapに登録されるobjをまとめる変数
         self.index = 0
-        self.index_dict = {"table": 0, "chair": 0, "unknown": 0}
+        self.index_dict = {"table": 0, "chair": 0, "bin": 0, "unknown": 0}
         self.world_model_path = roslib.packages.get_pkg_dir("tam_dynamic_map") + "/io/map/" + self.p_yaml_path
 
         ###################################################
@@ -214,7 +215,7 @@ class CreateWorldModel(Node):
         if registered_key is None:
             # 登録名の決定
             registered_key = str(f"{category_name}_{self.index_dict[category_name]}")
-            registered_key = str(f"table_{self.index_dict[category_name]}")
+            # registered_key = str(f"table_{self.index_dict[category_name]}")
             self.index_dict[category_name] += 1
             self.loginfo(f"register new object {registered_key}")
 
@@ -270,7 +271,7 @@ class CreateWorldModel(Node):
             # IoUの値が一定以下の場合は，新規オブジェクトとしてトラッキングの対象とする
             if max_iou < self.p_iou_th:
                 self.logdebug("register new objects for tracking")
-                tracking_obj = {"center_pose": center_pose, "scale": scale, "category": "unknown", "tracking_count": 0, "confidence": confidence, "registered_key": None}
+                tracking_obj = {"center_pose": center_pose, "scale": scale, "category": category_name, "tracking_count": 0, "confidence": confidence, "registered_key": None}
                 self.tracking_objects[self.index] = tracking_obj
                 self.index += 1
 
@@ -285,7 +286,7 @@ class CreateWorldModel(Node):
                     target_obj["registered_key"] = registered_key
 
                 # 情報のアップデート
-                if target_obj["confidence"] <= confidence and iou > 0.5:
+                if target_obj["confidence"] <= confidence and iou > 0.3:
                     target_obj["center_pose"] = center_pose
                     target_obj["scale"] = scale
                     target_obj["confidence"] = confidence

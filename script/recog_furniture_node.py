@@ -106,6 +106,8 @@ class RecogFurnitureNode(Logger):
         self.camera_frame_id = self.camera_info.header.frame_id
         self.camera_param_k = self.camera_info.K
         self.K = np.reshape(np.array([self.camera_param_k]), (3, 3))
+        self.h = self.camera_info.height
+        self.w = self.camera_info.width
 
         ###################################################
         # ROS interface
@@ -154,7 +156,7 @@ class RecogFurnitureNode(Logger):
 
     # def get_camera_pose(self, target_frame: str = "/map", camera_frame: str = "/head_rgbd_sensor_rgb_frame") -> Optional[PoseStamped]:
     #     """
-    #     カメラの姿勢を指定されたターゲットフレーム内で取得します。
+    #     カメラの姿勢を指定されたターゲットフレーム内で取得する関数
 
     #     Args:
     #         target_frame (str): 変換の対象となるフレーム。デフォルトは "/map" です。
@@ -246,9 +248,9 @@ class RecogFurnitureNode(Logger):
             marker.scale.y = obj["scale"][1]
             marker.scale.z = obj["scale"][0]
             marker.color.a = 1.0
-            marker.color.r = color[2]
+            marker.color.r = color[0]
             marker.color.g = color[1]
-            marker.color.b = color[0]
+            marker.color.b = color[2]
             marker.lifetime = rospy.Duration(3)
 
             markers.append(marker)
@@ -282,15 +284,12 @@ class RecogFurnitureNode(Logger):
         img_timestamp = img_msg.header.stamp
         time_diff = rospy.Time.now() - img_timestamp
         if time_diff > self.ignore_threshold:
+            self.logdebug("ignore image due to dime diff.")
             return
 
         batched = []
         self.detections.clear()
-        # h = img_msg.height
-        # w = img_msg.width
-        h = 480
-        w = 640
-        debug_img = np.zeros((h, w, 3)).astype(np.uint8)
+        debug_img = np.zeros((self.h, self.w, 3)).astype(np.uint8)
         imgs = []
         markerArray = MarkerArray()
         im = self.bridge.compressed_imgmsg_to_cv2(img_msg)
@@ -356,33 +355,20 @@ class RecogFurnitureNode(Logger):
                 )
                 objects.append({"pose": map_pose, "category": category, "scale": scale})
 
-                # box3d = [center[0], center[1], center[2], dim[0], dim[1], dim[2]]
-                # verts, faces = get_cuboid_verts_faces(box3d, rot)
-                # verts = torch.unsqueeze(verts, dim=0)
-                # xyz = np.asarray(verts).reshape((8, 3))
-                # xyz = xyz[np.argsort(xyz[:, 2], axis=0)]
-                # m_xy = xyz[:4]
-
                 omni_msg = Omni3D()
                 omni_msg.center_pose = map_pose
                 omni_msg.scale = scale
-                # omni_msg.rot = rot.flatten()
                 omni_msg.category = category
                 omni_msg.confidence = conf
                 omni_msg_array.append(omni_msg)
 
-                # detc = xyz.flatten()
-                # detc = np.append(detc, conf)
-                # detc = np.append(detc, category)
-                # self.detections.extend(detc)
-
-                xyxy, behind_camera, fully_behind = convert_3d_box_to_2d(self.K, bbox3D, rot_cam, clipw=w, cliph=h, XYWH=False, min_z=0.00)
+                xyxy, behind_camera, fully_behind = convert_3d_box_to_2d(self.K, bbox3D, rot_cam, clipw=self.w, cliph=self.h, XYWH=False, min_z=0.00)
                 bbox2D_proj = xyxy.cpu().detach().numpy().astype(np.int32)
 
                 if fully_behind:
                     continue
 
-                bbox2D_trunc = getTrunc2Dbbox(bbox2D_proj, h, w)
+                bbox2D_trunc = getTrunc2Dbbox(bbox2D_proj, self.h, self.w)
                 x1, y1, x2, y2 = bbox2D_trunc
 
                 color = 255 * self.clr[category, :3]
