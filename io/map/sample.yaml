@@ -1,23 +1,23 @@
 world:
-- id: table_1
-  type: table
-  pose: {x: 2.33, y: -0.733, z: 0}
-  scale: {x: 1.25, y: 0.45, z: 0.40}
-- id: table_2
-  type: table
-  pose: {x: 2.05, y: 2.15, z: 0}
-  scale: {x: 1.25, y: 0.45, z: 0.40}
-- id: table_tall
-  type: table
-  pose: {x: 0.75, y: 2.15, z: 0}
-  scale: {x: 0.42, y: 0.42, z: 0.60}
-- id: table_Kitchen
+# - id: table_1
+#   type: table
+#   pose: {x: 2.33, y: -0.733, z: 0}
+#   scale: {x: 1.25, y: 0.45, z: 0.40}
+# - id: table_2
+#   type: table
+#   pose: {x: 2.05, y: 2.15, z: 0}
+#   scale: {x: 1.25, y: 0.45, z: 0.40}
+# - id: table_tall
+#   type: table
+#   pose: {x: 0.75, y: 2.15, z: 0}
+#   scale: {x: 0.42, y: 0.42, z: 0.60}
+- id: table
   type: table
   pose: {x: 3.75, y: 0.72, z: 0}
-  scale: {x: 0.50, y: 0.75, z: 0.72}
-- id: chair_1
+  scale: {x: 0.50, y: 0.75, z: 0.74}
+- id: chair
   type: chair
-  pose: {x: 1.75, y: 0.72, z: 0}
+  pose: {x: 3.75, y: 1.72, z: 0}
   scale: {x: 0.50, y: 0.50, z: 1.00}
 
 
