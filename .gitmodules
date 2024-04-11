@@ -1,0 +1,3 @@
+[submodule "include/omni3d"]
+	path = include/omni3d
+	url = https://github.com/facebookresearch/omni3d.git

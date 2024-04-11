@@ -16,7 +16,9 @@ import numpy as np
 import open3d as o3d
 from matplotlib import cm
 import tf.transformations as tft
+from typing import Optional, Any, List
 from collections import OrderedDict
+from image_geometry import PinholeCameraModel
 from lib.MapObjectTracker import MapObjectTracker
 from lib.DatasetUtils import get_cuboid_verts_faces, convert_3d_box_to_2d, getTrunc2Dbbox
 from scipy.spatial.transform import Rotation as R
@@ -30,7 +32,7 @@ sys.dont_write_bytecode = True
 sys.path.append(os.getcwd())
 np.set_printoptions(suppress=True)
 
-sys.path.append(roslib.packages.get_pkg_dir("semantic_map") + "/include/omni3d/")
+sys.path.append(roslib.packages.get_pkg_dir("tam_dynamic_map") + "/include/omni3d/")
 
 from cubercnn.config import get_cfg_defaults
 from cubercnn.modeling.proposal_generator import RPNWithIgnore
@@ -39,32 +41,41 @@ from cubercnn.modeling.meta_arch import RCNN3D, build_model
 from cubercnn.modeling.backbone import build_dla_from_vision_fpn_backbone
 from cubercnn import util, vis
 
-from sensor_msgs.msg import Image
+from sensor_msgs.msg import Image, CameraInfo, CompressedImage
 from geometry_msgs.msg import PoseStamped
+from geometry_msgs.msg import Point, Pose, Quaternion
 from std_msgs.msg import UInt16, Float32MultiArray
 from visualization_msgs.msg import Marker, MarkerArray
 from tam_dynamic_map.msg import Omni3D, Omni3DArray
 
-from cv_bridge import CvBridge
+# from cv_bridge import CvBridge
 from tamlib.node_template import Node
-# from tamlib.cv_bridge import CvBridge
+from tamlib.utils import Logger
+from tamlib.tf import Transform, euler2quaternion
+from hsrlib.utils import utils, description, joints, locations
+from tamlib.cv_bridge import CvBridge
 
 
-class RecogFurnitureNode():
+class RecogFurnitureNode(Logger):
 
     def __init__(self, args):
+        super().__init__(loglevel="DEBUG")
 
-        omniTopic = rospy.get_param('omniTopic', "/tam_dynamic_map/omni3d_array")
-        # configPath = rospy.get_param('~configPath')
-        # modelPath = rospy.get_param('~modelPath')
-        # cameraTopic = rospy.get_param('cameraTopic')
-        # jsonPath = rospy.get_param('jsonPath')
-        # with open(jsonPath) as f:
-        #     self.args = json.load(f)
+        ###################################################
+        # ROSPARAMの読み込み
+        ###################################################
+        self.p_omni3d_marker_array = rospy.get_param("~omni3d_marker_array", "/omni3d/objects")
+        self.p_omni3d_result_image = rospy.get_param("~omni3d_image", "/omni3d/result_image/image_raw")
+        self.p_omni3d_pose_array = rospy.get_param("~omni3d_pose_array", "/tam_dynamic_map/omni3d_array")
+        self.p_rgb_topic = rospy.get_param("~rgb_topic", "/relay/hsrb/head_rgbd_sensor/rgb/image_rect_color/compressed")
+        self.p_camera_info_topic = rospy.get_param("~camera_info_topic", "/hsrb/head_rgbd_sensor/rgb/camera_info")
+        self.p_omni3d_threshold = rospy.get_param("~omni3d_th", 0.70)
+        self.p_time_ignore_threshold = rospy.get_param("~omni3d_time_ignore_th", 0.15)
+        self.ignore_threshold = rospy.Duration(self.p_time_ignore_threshold)
 
-        # args.config_file = configPath
-        # args.opts = ['MODEL.WEIGHTS', modelPath]
-
+        ###################################################
+        # Omni3dモデルの初期化
+        ###################################################
         self.args = args
         self.cfg = self.setup(self.args)
         self.model = build_model(self.cfg)
@@ -73,7 +84,6 @@ class RecogFurnitureNode():
         DetectionCheckpointer(self.model, save_dir=self.cfg.OUTPUT_DIR).resume_or_load(self.cfg.MODEL.WEIGHTS, resume=True)
 
         self.model.eval()
-        self.thres = args.threshold
 
         min_size = self.cfg.INPUT.MIN_SIZE_TEST
         max_size = self.cfg.INPUT.MAX_SIZE_TEST
@@ -87,32 +97,38 @@ class RecogFurnitureNode():
         self.metadata = util.load_json(category_path)
         self.cats = self.metadata['thing_classes']
 
-        # self.min_z = self.args.min_z
-        cam_h = self.args.camera_z + self.args.min_z
-        self.K = np.reshape(np.array([self.args.K]), (3, 3))
-        self.cam_poses = np.reshape(np.array([self.args.cam_poses]), (4, 4))
-        self.cam_poses[:, 2] += cam_h
+        ###################################################
+        # camera parameterの設定
+        ###################################################
+        self.camera_info = rospy.wait_for_message(self.p_camera_info_topic, CameraInfo)
+        self.camera_model = PinholeCameraModel()
+        self.camera_model.fromCameraInfo(self.camera_info)
+        self.camera_frame_id = self.camera_info.header.frame_id
+        self.camera_param_k = self.camera_info.K
+        self.K = np.reshape(np.array([self.camera_param_k]), (3, 3))
+        self.h = self.camera_info.height
+        self.w = self.camera_info.width
 
-        self.camNum = 4
-        self.bridge = CvBridge()
+        ###################################################
+        # ROS interface
+        ###################################################
+        self.rgb_sub = rospy.Subscriber(self.p_rgb_topic, CompressedImage, self.callback)
+        self.pred_pub_debug = rospy.Publisher(self.p_omni3d_result_image, Image, queue_size=10)
+        self.marker_pub = rospy.Publisher(self.p_omni3d_marker_array, MarkerArray,  queue_size=10)
+        self.full_pred_pub = rospy.Publisher(self.p_omni3d_pose_array, Omni3DArray, queue_size=1)
+
+        ###################################################
+        # 制御用変数の初期化
+        ###################################################
         self.detections = []
-        self.cnt = 0
-
-        self.rgb_topic = rospy.get_param("~rgb", "/hsrb/head_rgbd_sensor/rgb/image_raw")
-        self.sub = rospy.Subscriber(self.rgb_topic, Image, self.callback)
-
-        self.pred_pub = rospy.Publisher("omni3d", Float32MultiArray, queue_size=1)
-        self.pred_pub_debug = rospy.Publisher('omni3d_debug', Image, queue_size=1)
-        self.marker_pub = rospy.Publisher("omni3dMarkerTopic", MarkerArray,  queue_size=10)
-
-        self.full_pred_pub = rospy.Publisher(omniTopic, Omni3DArray, queue_size=1)
+        self.tamtf = Transform()
+        self.bridge = CvBridge()
+        self.listener = tf.TransformListener()
+        self.description = description.load_robot_description()
         self.clr = cm.rainbow(np.linspace(0, 1, len(self.cats)))
-
         self.origin = o3d.geometry.TriangleMesh.create_coordinate_frame()
 
-        self.listener = tf.TransformListener()
-
-        rospy.loginfo("Omni3DNode::Ready!")
+        self.logsuccess("omni3d node is ready!")
 
     @staticmethod
     def setup(args):
@@ -135,65 +151,58 @@ class RecogFurnitureNode():
         default_setup(cfg, args)
         return cfg
 
-    def to_lab_coords(self, center, dim, rot):
+    def delete(self):
+        pass
 
-        center = np.array([center]).T
-        rot = np.array(rot)
+    # def get_camera_pose(self, target_frame: str = "/map", camera_frame: str = "/head_rgbd_sensor_rgb_frame") -> Optional[PoseStamped]:
+    #     """
+    #     カメラの姿勢を指定されたターゲットフレーム内で取得する関数
 
-        rot_R = self.origin.get_rotation_matrix_from_xyz((-0.5 * np.pi, 0.5 * np.pi, 0))
-        center = (rot_R @ center).T.flatten()
-        rot = rot_R @ rot
+    #     Args:
+    #         target_frame (str): 変換の対象となるフレーム。デフォルトは "/map" です。
+    #         camera_frame (str): 変換のためのカメラフレーム。デフォルトは "/head_rgbd_sensor_rgb_frame" です。
 
-        return center, dim, rot
+    #     Return:
+    #         Optional[PoseStamped]: ターゲットフレーム内でのカメラの変換された姿勢を含む PoseStamped メッセージ。
+    #         TF変換例外（LookupException、ConnectivityException、ExtrapolationException）の場合は None を返します。
+    #     """
+    #     try:
+    #         # waitForTransformメソッドで座標変換の準備ができるまで待つ
+    #         self.listener.waitForTransform(target_frame, camera_frame, rospy.Time(), rospy.Duration(4.0))
 
-    def move_to_cam(self, gt, center, dim, rot):
+    #         # lookupTransformメソッドで座標変換を行う
+    #         (trans, rot) = self.listener.lookupTransform(target_frame, camera_frame, rospy.Time(0))
 
-        rot_T = np.eye(4)
-        # self.R = origin.get_rotation_matrix_from_xyz((0, 0, gt[3]))
-        rot_R = self.origin.get_rotation_matrix_from_xyz((0, 0, gt[3]))
-        rot_T[:3, :3] = rot_R
-        rot_T[0, 3] = gt[0]
-        rot_T[1, 3] = gt[1]
-        rot_T[2, 3] = gt[2]
+    #         # 変換された座標と姿勢をPoseStampedメッセージに格納
+    #         camera_pose = PoseStamped()
+    #         camera_pose.header.frame_id = target_frame
+    #         camera_pose.header.stamp = rospy.Time(0)
+    #         camera_pose.pose.position.x = trans[0]
+    #         camera_pose.pose.position.y = trans[1]
+    #         camera_pose.pose.position.z = trans[2]
+    #         camera_pose.pose.orientation.x = rot[0]
+    #         camera_pose.pose.orientation.y = rot[1]
+    #         camera_pose.pose.orientation.z = rot[2]
+    #         camera_pose.pose.orientation.w = rot[3]
 
-        center = np.array([center[0], center[1], center[2], 1.0]).T
-        rot = np.array(rot)
+    #         return camera_pose
+    #     except (tf.LookupException, tf.ConnectivityException, tf.ExtrapolationException):
+    #         rospy.logwarn("TF transform exception")
+    #         return None
 
-        center = (rot_T @ center).T.flatten()
-        center = center[:3]
-        rot = rot_R @ rot
+    def pose_to_matrix(self, pose) -> np.ndarray:
+        """
+        PoseStampedメッセージを4x4変換行列に変換する関数
 
-        return center, dim, rot
+        Args:
+            pose (PoseStamped): 変換する姿勢情報が格納されたPoseStampedメッセージ。
 
-    def get_camera_pose(self, target_frame="/map", camera_frame="/head_rgbd_sensor_link"):
-        try:
-            # waitForTransformメソッドで座標変換の準備ができるまで待つ
-            self.listener.waitForTransform(target_frame, camera_frame, rospy.Time(), rospy.Duration(4.0))
+        Returns:
+            np.ndarray: カメラの姿勢を表す4x4変換行列。
 
-            # lookupTransformメソッドで座標変換を行う
-            (trans, rot) = self.listener.lookupTransform(target_frame, camera_frame, rospy.Time(0))
-
-            # 変換された座標と姿勢を表示
-            rospy.loginfo("Translation: %s, Rotation: %s", trans, rot)
-
-            # 変換された座標と姿勢をPoseStampedメッセージに格納
-            camera_pose = PoseStamped()
-            camera_pose.header.frame_id = target_frame
-            camera_pose.header.stamp = rospy.Time(0)
-            camera_pose.pose.position.x = trans[0]
-            camera_pose.pose.position.y = trans[1]
-            camera_pose.pose.position.z = trans[2]
-            camera_pose.pose.orientation.x = rot[0]
-            camera_pose.pose.orientation.y = rot[1]
-            camera_pose.pose.orientation.z = rot[2]
-            camera_pose.pose.orientation.w = rot[3]
-
-            return camera_pose
-        except (tf.LookupException, tf.ConnectivityException, tf.ExtrapolationException):
-            rospy.logwarn("TF transform exception")
-            return None
-
-    def pose_to_matrix(self, pose):
+        注記:
+        - 入力のPoseStampedメッセージは、ローカル座標系からグローバル座標系への変換に使用されます。
+        """
         translation = [pose.pose.position.x, pose.pose.position.y, pose.pose.position.z]
         rotation = [pose.pose.orientation.x, pose.pose.orientation.y,
                     pose.pose.orientation.z, pose.pose.orientation.w]
@@ -207,78 +216,83 @@ class RecogFurnitureNode():
 
         return camera_matrix
 
-    def createMarkers(self, mapObjs):
+    def create_cube_markers(self, objects: List[dict]) -> List[Marker]:
+        """
+        キューブのマーカー配列を作成する関数
+
+        Args:
+            objects (List[dict]): 各オブジェクトの情報が格納された辞書のリスト。
+            各辞書は以下のキーを持つ:
+            - "category" (str): オブジェクトのカテゴリ。
+            - "pose" (Pose): オブジェクトの姿勢情報が格納されたPoseメッセージ。
+            - "scale" (List[float]): オブジェクトのスケール。[長さ、幅、高さ]の順。
+
+        Returns:
+            List[Marker]: 作成されたキューブのマーカーのリスト。
+
+        注記:
+            - 各マーカーの色は、カテゴリに基づいて指定された色になります。
+            - マーカーは "map" フレームに追加され、3秒間表示されます。
+        """
 
         markers = []
-
-        for obj in mapObjs:
-
+        for obj in objects:
+            color = self.clr[obj["category"]]
             marker = Marker()
             marker.header.frame_id = "map"
             marker.action = marker.ADD
             marker.type = marker.CUBE
-            marker.pose.position.x = obj.center[0]
-            marker.pose.position.y = obj.center[1]
-            marker.pose.position.z = obj.center[2]
+            marker.pose = obj["pose"]
 
-            r = R.from_matrix(obj.rot)
-            q = r.as_quat()
-            color = self.clr[obj.category]
-
-            marker.pose.orientation.x = q[0]
-            marker.pose.orientation.y = q[1]
-            marker.pose.orientation.z = q[2]
-            marker.pose.orientation.w = q[3]
-            marker.scale.x = obj.dim[2]
-            marker.scale.y = obj.dim[1]
-            marker.scale.z = obj.dim[0]
+            marker.scale.x = obj["scale"][2]
+            marker.scale.y = obj["scale"][1]
+            marker.scale.z = obj["scale"][0]
             marker.color.a = 1.0
-            marker.color.r = color[2]
+            marker.color.r = color[0]
             marker.color.g = color[1]
-            marker.color.b = color[0]
+            marker.color.b = color[2]
             marker.lifetime = rospy.Duration(3)
 
             markers.append(marker)
 
         return markers
 
-    def callback(self, msg: Image) -> None:
+    def callback(self, msg: CompressedImage) -> None:
         """画像が入力されたときのコールバック関数
         Args:
             msg (Image): Image_msg
         Return:
             None
         """
-        # camera座標を取得
-        camera_pose = self.get_camera_pose()
-        print(camera_pose)
-        camera_matrix = self.pose_to_matrix(camera_pose)
-        self.cam_poses = copy.deepcopy(camera_matrix)
-
-        # self.min_z = self.args.min_z
-        # cam_h = self.args.camera_z + self.args.min_z
-        # self.K = np.reshape(np.array([self.args.K]), (3, 3))
-
         debug_img = self.infer(msg)
-        image_msg = self.bridge.cv2_to_imgmsg(debug_img, encoding='bgr8')
-        image_msg.header.stamp = msg.header.stamp
-        self.pred_pub_debug.publish(image_msg)
+        # image_msg = self.bridge.cv2_to_compressed_imgmsg(debug_img)
+        try:
+            image_msg = self.bridge.cv2_to_imgmsg(debug_img, encoding="rgb8")
+            image_msg.header.stamp = msg.header.stamp
+            self.pred_pub_debug.publish(image_msg)
+        except TypeError as e:
+            self.logtrace(e)
+            self.logdebug("cannot publish image")
 
-        msg = Float32MultiArray()
-        msg.data = self.detections
-        self.pred_pub.publish(msg)
-
-    def infer(self, img_msg: Image):
+    def infer(self, img_msg: CompressedImage) -> np.ndarray:
+        """Omni3Dを利用した家具認識の実行
+        Args:
+            img_msg(Image): 対象とするimage_message
+        Return:
+            np.ndarray: 認識結果を描画した画像
+        """
+        img_timestamp = img_msg.header.stamp
+        time_diff = rospy.Time.now() - img_timestamp
+        if time_diff > self.ignore_threshold:
+            self.logdebug("ignore image due to dime diff.")
+            return
 
         batched = []
         self.detections.clear()
-        h = img_msg.height
-        w = img_msg.width
-        debug_img = np.zeros((h, w, 3)).astype(np.uint8)
+        debug_img = np.zeros((self.h, self.w, 3)).astype(np.uint8)
         imgs = []
         markerArray = MarkerArray()
-
-        im = self.bridge.imgmsg_to_cv2(img_msg, desired_encoding='passthrough')
+        im = self.bridge.compressed_imgmsg_to_cv2(img_msg)
         image_shape = im.shape[:2]
         im = cv2.cvtColor(im, cv2.COLOR_BGR2RGB)
         imgs.append(im)
@@ -295,28 +309,24 @@ class RecogFurnitureNode():
 
         alldets = self.model(batched)
 
-        clr = cm.rainbow(np.linspace(0, 1, len(self.cats)))
-        omniArray = []
-        objs = []
+        omni_msg_array = []
 
         dets = alldets[0]['instances']
         n_det = len(dets)
 
         meshes = []
         meshes_text = []
-        gt_ = self.cam_poses[0]
-        gt = copy.deepcopy(gt_)
-        print(gt)
         im = imgs[0]
+        objects = []
 
         if n_det > 0:
             for idx, (corners3D, center_cam, center_2D, dimensions, pose, score, cat_idx) in enumerate(zip(
-                    dets.pred_bbox3D, dets.pred_center_cam, dets.pred_center_2D, dets.pred_dimensions, 
+                    dets.pred_bbox3D, dets.pred_center_cam, dets.pred_center_2D, dets.pred_dimensions,
                     dets.pred_pose, dets.scores, dets.pred_classes
             )):
 
                 # skip
-                if score < self.thres:
+                if score < self.p_omni3d_threshold:
                     continue
 
                 cat = self.cats[cat_idx]
@@ -328,47 +338,40 @@ class RecogFurnitureNode():
                 meshes.append(box_mesh)
 
                 center = center_cam.tolist()
-                dim = dimensions.tolist()
-                R_cam = pose.cpu().detach().numpy()
+                scale = dimensions.tolist()
+                rot_cam = pose.cpu().detach().numpy()
+                rot = np.eye(4)
+                rot[:3, :3] = rot_cam
+                rot[3, 3] = 1
+                q = tft.quaternion_from_matrix(rot)
                 conf = score.cpu().detach().numpy()
                 category = cat_idx.cpu().detach().numpy()
 
-                center, dim, rot = self.to_lab_coords(center, dim, R_cam)
-                center, dim, rot = self.move_to_cam(gt, center, dim, rot)
-                obj = MapObjectTracker(category, center, dim, rot, conf)
-                objs.append(obj)
-
-                rot = np.reshape(rot, (3, 3))
-                box3d = [center[0], center[1], center[2], dim[0], dim[1], dim[2]]
-                verts, faces = get_cuboid_verts_faces(box3d, rot)
-                verts = torch.unsqueeze(verts, dim=0)
-                xyz = np.asarray(verts).reshape((8, 3))
-                xyz = xyz[np.argsort(xyz[:, 2], axis=0)]
-                m_xy = xyz[:4]
+                # 座標変換(カメラ座標系→マップ座標系)
+                map_pose: Pose = self.tamtf.get_pose_with_offset(
+                    self.description.frame.map,
+                    self.description.frame.rgbd,
+                    offset=Pose(Point(x=center[0], y=center[1], z=center[2]), Quaternion(q[0], q[1], q[2], q[3])),
+                )
+                objects.append({"pose": map_pose, "category": category, "scale": scale})
 
                 omni_msg = Omni3D()
-                omni_msg.center = center.flatten()
-                omni_msg.dim = dim
-                omni_msg.rot = rot.flatten()
+                omni_msg.center_pose = map_pose
+                omni_msg.scale = scale
                 omni_msg.category = category
                 omni_msg.confidence = conf
-                omniArray.append(omni_msg)
+                omni_msg_array.append(omni_msg)
 
-                detc = xyz.flatten()
-                detc = np.append(detc, conf)
-                detc = np.append(detc, category)
-                self.detections.extend(detc)
-
-                xyxy, behind_camera, fully_behind = convert_3d_box_to_2d(self.K, bbox3D, R_cam, clipw=w, cliph=h, XYWH=False, min_z=0.00)
+                xyxy, behind_camera, fully_behind = convert_3d_box_to_2d(self.K, bbox3D, rot_cam, clipw=self.w, cliph=self.h, XYWH=False, min_z=0.00)
                 bbox2D_proj = xyxy.cpu().detach().numpy().astype(np.int32)
 
                 if fully_behind:
                     continue
 
-                bbox2D_trunc = getTrunc2Dbbox(bbox2D_proj, h, w)
+                bbox2D_trunc = getTrunc2Dbbox(bbox2D_proj, self.h, self.w)
                 x1, y1, x2, y2 = bbox2D_trunc
 
-                color = 255 * clr[category, :3]
+                color = 255 * self.clr[category, :3]
                 cv2.rectangle(im, (x1, y1), (x2, y2), color, 2)
                 text1 = "{}".format(self.cats[category])
                 text2 = "{:.2f}".format(conf)
@@ -377,26 +380,19 @@ class RecogFurnitureNode():
 
         debug_img = im
 
-        markers = self.createMarkers(objs)
+        markers = self.create_cube_markers(objects)
         markerArray.markers = markers
-        mid = 0
-        for m in markerArray.markers:
-            m.id = mid
-            mid += 1
+        for index, m in enumerate(markerArray.markers):
+            m.id = index
+
         self.marker_pub.publish(markerArray)
 
         omni_array_msg = Omni3DArray()
         omni_array_msg.header.stamp = img_msg.header.stamp
-        omni_array_msg.detections = omniArray
+        omni_array_msg.detections = omni_msg_array
         self.full_pred_pub.publish(omni_array_msg)
 
         return debug_img
-
-    def run(self):
-        pass
-
-    def delete(self):
-        pass
 
 
 class ArgsSetting():
@@ -404,7 +400,7 @@ class ArgsSetting():
     def __init__(self) -> None:
         self.config_file = "cubercnn://omni3d/cubercnn_DLA34_FPN.yaml"
         self.input_folder = "../include/omni3d/datasets/hma"
-        self.threshold = 0.60
+        self.threshold = 0.70
         self.display = False
         self.eval_only = True
         self.num_gpus = 1
@@ -413,11 +409,6 @@ class ArgsSetting():
         port = 2 ** 15 + 2 ** 14 + hash(os.getuid() if sys.platform != "win32" else 1) % 2 ** 14
         self.dist_url = "tcp://127.0.0.1:{}".format(port),
         self.opts = ['MODEL.WEIGHTS', "cubercnn://omni3d/cubercnn_DLA34_FPN.pth", 'OUTPUT_DIR', 'output/demo']
-        self.cam_poses = [0.1, 0, 0, 0, 0, -0.1, 0, -1.5707963267948966, -0.1, 0, 0, 3.141592653589793, 0, 0.1, 0,  1.5707963267948966]
-        self.min_z = -1.55708286
-        self.camera_z = 0.93
-        self.K = [538.2791736731888, 0.0, 318.6289689273318, 0.0, 539.083535340329, 235.7076528540864, 0.0, 0.0, 1.0]
-        print(self.opts)
 
 
 if __name__ == "__main__":
