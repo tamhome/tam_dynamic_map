@@ -2,7 +2,7 @@
 
 - Our paper is available: Unified Understanding of Environment, Task, and Human for Human-Robot Interaction in Real-World Environments
 
-- ![loading objects](./assets/semi-dynamic_information.jpg)
+![loading objects](./assets/semi-dynamic_information.jpg)
 
 ## Environments
 
