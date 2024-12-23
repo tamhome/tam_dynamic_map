@@ -10,6 +10,10 @@
 - ROS noetic
 - CUDA: 11.7
 
+## Docker support
+
+- Please refer [this repository](https://github.com/yuzoo0226/omni3d_docker.git)
+
 ## How to build
 
 ```bash
