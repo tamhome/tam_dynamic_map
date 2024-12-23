@@ -1,6 +1,6 @@
 # Indoor Dynamic Map
 
-- Our paper is available: Unified Understanding of Environment, Task, and Human for Human-Robot Interaction in Real-World Environments
+- Our paper is available: [Unified Understanding of Environment, Task, and Human for Human-Robot Interaction in Real-World Environments](https://arxiv.org/abs/2412.13726)
 
 ![loading objects](./assets/semi-dynamic_information.jpg)
 
