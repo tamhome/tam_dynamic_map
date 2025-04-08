@@ -73,3 +73,18 @@ rosrun tam_dynamic_map load_world_model.py
     <arg name="world_model_name" value="$(arg world_model_name)"/>
 </include>
 ```
+
+## 🙏 citation
+
+```tex
+@inproceedings{yano2024unified,
+  title={Unified understanding of environment, task, and human for human-robot interaction in real-world environments},
+  author={Yano, Yuga and Mizutani, Akinobu and Fukuda, Yukiya and Kanaoka, Daiju and Ono, Tomohiro and Tamukoh, Hakaru},
+  booktitle={2024 33rd IEEE International Conference on Robot and Human Interactive Communication (ROMAN)},
+  pages={224--230},
+  year={2024},
+  organization={IEEE}
+}
+```
+
+- This work in licensed under the MIT license. To view a copy of this license, see [LICENSE](LICENSE).
