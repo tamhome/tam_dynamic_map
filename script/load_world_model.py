@@ -9,20 +9,24 @@ import pprint
 import numpy as np
 from typing import Optional
 
-from hsrlib.hsrif import collision_world
-from hsrlib.utils import locations
+# from hsrlib.hsrif import collision_world
+# from hsrlib.utils import locations
 
 from visualization_msgs.msg import Marker, MarkerArray
 from geometry_msgs.msg import Pose, Point, Quaternion, Pose2D
 from tam_dynamic_map.srv import GetObjectPose, GetObjectPoseResponse
 from tam_dynamic_map.srv import GetNavigationGoal, GetNavigationGoalResponse
+from tam_dynamic_map.srv import GetAllObjectPose, GetAllObjectPoseResponse
+from tam_dynamic_map.msg import ObjectPose, ObjectPoseArray
+
 from tamlib.node_template import Node
+from tamlib.tf import Transform, quaternion2euler, euler2quaternion
 
 
 class LoadWorldModel(Node):
     def __init__(self) -> None:
         super().__init__()
-        self.p_yaml_path = rospy.get_param("~world_model_path", "sample01.yaml")
+        self.p_yaml_path = rospy.get_param("~world_model_path", "sample.yaml")
 
         self.furniture_dir = roslib.packages.get_pkg_dir("tam_dynamic_map") + "/io/furniture_templates/"
         self.yaml_path = roslib.packages.get_pkg_dir("tam_dynamic_map") + f"/io/map/{self.p_yaml_path}"
@@ -32,9 +36,10 @@ class LoadWorldModel(Node):
 
         # service
         rospy.Service("/tam_dynamic_map/get_obj_pose/service", GetObjectPose, self.cb_get_object_pose)
+        rospy.Service("/tam_dynamic_map/get_all_obj_pose/service", GetAllObjectPose, self.cb_get_all_object_pose)
         rospy.Service("/tam_dynamic_map/get_navigation_goal/service", GetNavigationGoal, self.cb_get_navigation_goal)
 
-        self.collision_world = collision_world.CollisionWorld()
+        # self.collision_world = collision_world.CollisionWorld()
 
         # collision_worldの初期化フラグ
         self.initialize = True
@@ -61,8 +66,8 @@ class LoadWorldModel(Node):
             pose = content["pose"]
             size = content["size"]
 
-            # if model_type == "unknown":
-            if True:
+            if model_type == "unknown":
+            # if True:
                 pub_pose_x = offset_pose["x"]
                 pub_pose_y = offset_pose["y"]
                 pub_pose_z = offset_pose["z"]
@@ -80,13 +85,13 @@ class LoadWorldModel(Node):
                 marker.type = Marker.CUBE
                 if self.initialize:
                     self.loginfo(f"pub collision world: {marker_ns}")
-                    self.collision_world.add_box(
-                        size["x"] * scale["x"],
-                        size["y"] * scale["y"],
-                        size["z"] * scale["z"],
-                        pose=[(pub_pose_x, pub_pose_y, pub_pose_z), (quaternion["x"], quaternion["y"], quaternion["z"], quaternion["w"])],
-                        name=marker_ns
-                    )
+                    # self.collision_world.add_box(
+                    #     size["x"] * scale["x"],
+                    #     size["y"] * scale["y"],
+                    #     size["z"] * scale["z"],
+                    #     pose=[(pub_pose_x, pub_pose_y, pub_pose_z), (quaternion["x"], quaternion["y"], quaternion["z"], quaternion["w"])],
+                    #     name=marker_ns
+                    # )
             else:
                 marker.type = Marker.CUBE
 
@@ -105,6 +110,11 @@ class LoadWorldModel(Node):
                 marker.color.g = 0.7
                 marker.color.b = 1.0
                 marker.color.a = 1.0
+            elif model_type == "floor":
+                marker.color.r = 0.8
+                marker.color.g = 0.8
+                marker.color.b = 0.8
+                marker.color.a = 1.0            
             else:
                 marker.color.r = 1.00
                 marker.color.g = 0.7
@@ -198,7 +208,8 @@ class LoadWorldModel(Node):
         Returns:
             Pose2D ナビゲーションの目的地
         """
-        current_x, current_y, _ = locations.get_robot_position()
+        # current_x, current_y, _ = locations.get_robot_position()
+        current_x, current_y = 0, 0  # sigverseように開発必須
         self.nav_distance = 0.1
         target_pose_list = [
             [obj_pose.position.x + scale[0] + self.nav_distance, obj_pose.position.y, 3.14],
@@ -220,6 +231,32 @@ class LoadWorldModel(Node):
 
         return target_pose2d
 
+    def cb_get_all_object_pose(self, req: GetAllObjectPose) -> GetAllObjectPoseResponse:
+        """world modelに定義されているすべてのobjectの中心位置と大きさを返す関数
+        Args:
+            req(GetObjectPose): service message
+        Returns:
+            GetAllObjectPoseResponse
+        """
+        response = GetAllObjectPoseResponse()
+        world_model = self.load_world_model(self.yaml_path)
+
+        obj_pose_array = []
+
+        for obj in world_model:
+            point = Point(x=obj["pose"]["x"], y=obj["pose"]["y"], z=obj["pose"]["z"])
+            quaternion = Quaternion(obj["quaternion"]["x"], obj["quaternion"]["y"], obj["quaternion"]["z"], obj["quaternion"]["w"])
+            scale = [obj["scale"]["x"], obj["scale"]["y"], obj["scale"]["z"]]
+            pose = Pose(point, quaternion)
+
+            current_obj_pose = ObjectPose(id=obj["id"], scale=scale, pose=pose)
+            obj_pose_array.append(current_obj_pose)
+
+        # response.obj_info_array.header = ...
+        response.world_model.obj_poses = obj_pose_array
+
+        return response
+
     def cb_get_object_pose(self, req: GetObjectPose) -> GetObjectPoseResponse:
         """objectの中心位置と大きさを返す関数
         Args:
@@ -240,7 +277,13 @@ class LoadWorldModel(Node):
                 continue
             self.loginfo("found target object")
             point = Point(x=obj["pose"]["x"], y=obj["pose"]["y"], z=obj["pose"]["z"])
-            quaternion = Quaternion(obj["quaternion"]["x"], obj["quaternion"]["y"], obj["quaternion"]["z"], obj["quaternion"]["w"])
+            try:
+                quaternion = Quaternion(obj["quaternion"]["x"], obj["quaternion"]["y"], obj["quaternion"]["z"], obj["quaternion"]["w"])
+            except Exception as e:
+                try:
+                    quaternion = euler2quaternion(obj["euler"]["x"], obj["euler"]["y"], obj["euler"]["z"])
+                except Exception as e:
+                    quaternion = Quaternion(0, 0, 0, 1)
             scale = [obj["scale"]["x"], obj["scale"]["y"], obj["scale"]["z"]]
             break
 
@@ -287,8 +330,8 @@ class LoadWorldModel(Node):
     def run(self) -> None:
         if self.initialize:
             self.loginfo("remove all collison world's objetcs")
-            self.collision_world.remove_all()
-            rospy.sleep(5)
+            # self.collision_world.remove_all()
+            rospy.sleep(2)
 
         try:
             world_model = self.load_world_model(self.yaml_path)
@@ -303,7 +346,18 @@ class LoadWorldModel(Node):
 
         for target_model in world_model:
             if target_model != "wall":
-                marker_array = self.load_marker_poses(target_model["type"], target_model["id"], target_model["pose"], target_model["scale"], target_model["quaternion"])
+                try:
+                    marker_array = self.load_marker_poses(target_model["type"], target_model["id"], target_model["pose"], target_model["scale"], target_model["quaternion"])
+                except Exception as e:
+                    target_quaternion = euler2quaternion(target_model["euler"]["x"], target_model["euler"]["y"], target_model["euler"]["z"])
+                    target_quaternion = {
+                        "x": target_quaternion.x,
+                        "y": target_quaternion.y,
+                        "z": target_quaternion.z,
+                        "w": target_quaternion.w,
+                    }
+                    marker_array = self.load_marker_poses(target_model["type"], target_model["id"], target_model["pose"], target_model["scale"], target_quaternion)
+
                 # marker_array = self.load_marker_poses(target_model["type"], target_model["id"], target_model["pose"], target_model["scale"])
             else:
                 # 壁は画像から読み込みを行う

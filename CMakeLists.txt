@@ -16,6 +16,8 @@ add_message_files(
   FILES
   Omni3D.msg
   Omni3DArray.msg
+  ObjectPose.msg
+  ObjectPoseArray.msg
 )
 
 # Generate services in the 'srv' folder
@@ -23,6 +25,7 @@ add_service_files(
   FILES
   GetNavigationGoal.srv
   GetObjectPose.srv
+  GetAllObjectPose.srv
 )
 
 ## Generate actions in the 'action' folder

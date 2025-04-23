@@ -15,10 +15,11 @@ world:
   type: table
   pose: {x: 3.75, y: 0.72, z: 0}
   scale: {x: 0.50, y: 0.75, z: 0.74}
-- id: chair
-  type: chair
-  pose: {x: 3.75, y: 1.72, z: 0}
-  scale: {x: 0.50, y: 0.50, z: 1.00}
+  quaternion: {x: 0, y: 0, z: 0, w: 1}
+# - id: chair
+#   type: chair
+#   pose: {x: 3.75, y: 1.72, z: 0}
+#   scale: {x: 0.50, y: 0.50, z: 1.00}
 
 
 # 壁に関する指定
