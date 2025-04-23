@@ -1,3 +1,6 @@
 **
 !.gitignore
 !sample.yaml
+!interactive_cleanup.yaml
+!handyman_2019HM01.yaml
+
